@@ -1,0 +1,68 @@
+name: Build Crystalline - Android ARM64
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      NDK_VERSION: "28.2.13676358"
+      ANDROID_API: "24"
+
+    steps:
+      - name: Checkout Crystalline
+        uses: actions/checkout@v4
+        with:
+          repository: elbywan/crystalline
+          path: crystalline
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK / NDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;${NDK_VERSION}"
+
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: latest
+
+      - name: Install shards
+        working-directory: crystalline
+        run: |
+          shards install --production
+
+      - name: Build Crystalline Object
+        working-directory: crystalline
+        env:
+          NDK: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+          ANDROID_API: ${{ env.ANDROID_API }}
+        run: |
+          set -eux
+
+          crystal build \
+            src/crystalline.cr \
+            --release \
+            --no-debug \
+            --cross-compile \
+            --target "aarch64-linux-android${ANDROID_API}" \
+            -o crystalline-android-arm64.o
+
+          file crystalline-android-arm64.o
+          ls -lh crystalline-android-arm64.o
+
+      - name: Upload Object Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: crystalline-android-arm64-object
+          path: crystalline/crystalline-android-arm64.o
+          if-no-files-found: error
