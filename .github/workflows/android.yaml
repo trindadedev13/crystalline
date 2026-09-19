@@ -5,11 +5,12 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     env:
       NDK_VERSION: "28.2.13676358"
       ANDROID_API: "24"
+      LLVM_VERSION: "21.0.0"
 
     steps:
       - name: Checkout Crystalline
@@ -23,6 +24,8 @@ jobs:
 
       - name: Install Android SDK / NDK
         run: |
+          set -eux
+
           yes | sdkmanager --licenses >/dev/null || true
 
           sdkmanager \
@@ -31,24 +34,150 @@ jobs:
             "build-tools;35.0.0" \
             "ndk;${NDK_VERSION}"
 
-      - name: Install Crystal
+      - name: Install LLVM 21
+        run: |
+          set -eux
+
+          sudo apt-get update
+          sudo apt-get install -y \
+            wget \
+            gnupg \
+            lsb-release \
+            ca-certificates \
+            git \
+            build-essential \
+            libpcre2-dev \
+            libyaml-dev \
+            libgc-dev
+
+          wget -qO- https://apt.llvm.org/llvm.sh \
+            | sudo bash -s -- 21
+
+          sudo apt-get install -y \
+            llvm-21 \
+            llvm-21-dev \
+            llvm-21-tools \
+            clang-21
+
+          echo "/usr/lib/llvm-21/bin" >> "$GITHUB_PATH"
+
+      - name: Verify LLVM 21
+        run: |
+          set -eux
+
+          clang --version
+          llvm-config --version
+          llvm-config --prefix
+
+          test "$(llvm-config --version | cut -d. -f1)" = "21"
+
+      - name: Checkout Crystal 1.21.0
+        uses: actions/checkout@v4
+        with:
+          repository: crystal-lang/crystal
+          ref: 1.21.0
+          path: crystal
+
+      - name: Install Crystal bootstrap
         uses: crystal-lang/install-crystal@v1
         with:
-          crystal: latest
+          crystal: 1.21.0
 
-      - name: Install shards
-        working-directory: crystalline
+      - name: Build Crystal with LLVM 21
+        working-directory: crystal
+        env:
+          LLVM_CONFIG: /usr/lib/llvm-21/bin/llvm-config
         run: |
+          set -eux
+
+          export PATH="/usr/lib/llvm-21/bin:$PATH"
+
+          echo "=== Bootstrap Crystal ==="
+          which crystal
+          crystal version
+
+          echo "=== LLVM ==="
+          llvm-config --version
+          llvm-config --prefix
+
+          echo "=== Build Crystal ==="
+          make clean || true
+
+          make LLVM_CONFIG="$LLVM_CONFIG"
+
+          echo "=== Result ==="
+          ./bin/crystal version
+
+      - name: Verify Crystal LLVM
+        working-directory: crystal
+        run: |
+          set -eux
+
+          ./bin/crystal version
+
+          ldd ./bin/crystal | grep -i llvm || true
+
+      - name: Checkout Shards
+        uses: actions/checkout@v4
+        with:
+          repository: crystal-lang/shards
+          path: shards
+
+      - name: Build Shards with custom Crystal
+        working-directory: shards
+        env:
+          LLVM_CONFIG: /usr/lib/llvm-21/bin/llvm-config
+        run: |
+          set -eux
+
+          export PATH="${{ github.workspace }}/crystal/bin:/usr/lib/llvm-21/bin:$PATH"
+
+          echo "=== Custom Crystal ==="
+          which crystal
+          crystal version
+
+          echo "=== Build Shards ==="
+          crystal build \
+            src/shards.cr \
+            --release \
+            -o shards
+
+          echo "=== Result ==="
+          ./shards --version
+
+      - name: Install Crystalline dependencies
+        working-directory: crystalline
+        env:
+          PATH: ${{ github.workspace }}/shards:/usr/bin:/bin:${{ github.workspace }}/crystal/bin:/usr/lib/llvm-21/bin
+        run: |
+          set -eux
+
+          echo "=== Crystal ==="
+          which crystal
+          crystal version
+
+          echo "=== Shards ==="
+          which shards
+          shards --version
+
+          echo "=== Install dependencies ==="
           shards install --production
 
       - name: Build Crystalline Object
         working-directory: crystalline
         env:
+          PATH: ${{ github.workspace }}/crystal/bin:/usr/bin:/bin:/usr/lib/llvm-21/bin
           NDK: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
           ANDROID_API: ${{ env.ANDROID_API }}
+          LLVM_CONFIG: /usr/lib/llvm-21/bin/llvm-config
         run: |
           set -eux
 
+          echo "=== Crystal ==="
+          which crystal
+          crystal version
+
+          echo "=== Build Crystalline ==="
           crystal build \
             src/crystalline.cr \
             --release \
