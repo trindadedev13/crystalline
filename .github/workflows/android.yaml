@@ -1,0 +1,34 @@
+name: Build Crystalline ARM64
+
+on:
+  workflow_dispatch: # Permite disparar o build manualmente na aba Actions
+
+jobs:
+  build:
+    runs-on: ubuntu-latest # Roda em um servidor potente do GitHub
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Configura o QEMU para permitir compilação nativa/emulada para aarch64
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # Compila o Crystalline dentro de um container Docker ARM64
+      - name: Build Crystalline Binary
+        run: |
+          docker run --rm --platform linux/arm64 -v ${{ github.workspace }}:/workspace -w /workspace crystallang/crystal:latest-alpine sh -c "
+            apk add --no-libc-validations --no-cache llvm-dev static g++ make git && \
+            git clone https://github.com/elbywan/crystalline.git && \
+            cd crystalline && \
+            shards install --production && \
+            crystal build src/crystalline.cr --release --static --no-debug -o /workspace/crystalline-arm64
+          "
+
+      # Disponibiliza o binário gerado para download
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: crystalline-arm64
+          path: crystalline-arm64
